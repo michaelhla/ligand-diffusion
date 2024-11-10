@@ -12,16 +12,14 @@ RDLogger.DisableLog('rdApp.*')
 
 class PDBBind(ProteinLigandDataset):
     def get_complex_list(self) -> List[str]:
-        print("Getting PDBBind complex list...")
         complex_dirs = os.listdir(self.root)
         # Take only first few directories for quick testing
         complex_dirs = complex_dirs[:160]  # Limit to 10 complexes
-        print(f"Using {len(complex_dirs)} PDBBind complexes for testing")
+        print(f"Using {len(complex_dirs)} PDBBind complexes")
         return [d for d in complex_dirs if os.path.isdir(os.path.join(self.root, d))]
 
     def process_complex(self, complex_name: str) -> Optional[HeteroData]:
         try:
-            print(f"Processing PDBBind complex: {complex_name}")
             protein_file = os.path.join(self.root, complex_name, f"{complex_name}_protein_processed.pdb")
             ligand_file = os.path.join(self.root, complex_name, f"{complex_name}_ligand.sdf")
             

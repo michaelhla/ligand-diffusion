@@ -13,7 +13,6 @@ RDLogger.DisableLog('rdApp.*')
 
 class MOAD(ProteinLigandDataset):
     def get_complex_list(self) -> List[str]:
-        print("Getting MOAD complex list...")
         protein_dir = os.path.join(self.root, 'pdb_protein')
         ligand_dir = os.path.join(self.root, 'pdb_superligand')
         
@@ -44,18 +43,15 @@ class MOAD(ProteinLigandDataset):
                 for lig_idx in range(ligand_count):
                     complex_pairs.append((protein_id, lig_idx))
                     
-                if len(complex_pairs) >= 320:  # Limit to ~10 protein-ligand pairs
-                    break
+                # if len(complex_pairs) >= 320:  # Limit to ~n protein-ligand pairs
+                #     break
         
-        print(f"Found {len(complex_pairs)} valid MOAD complexes for testing")
-        for pair in complex_pairs:
-            print(f"  - {pair[0]} (ligand {pair[1]})")
+        print(f"Found {len(complex_pairs)} valid MOAD complexes")
         return complex_pairs
 
     def process_complex(self, complex_pair: tuple) -> Optional[HeteroData]:
         try:
             protein_id, ligand_idx = complex_pair
-            print(f"Processing MOAD complex: {protein_id} ligand {ligand_idx}")
             
             # Create paths
             protein_file = os.path.join(self.root, 'pdb_protein', f"{protein_id}_protein.pdb")
@@ -83,7 +79,6 @@ class MOAD(ProteinLigandDataset):
             data['ligand'].smiles = smiles
             data.complex_name = f"{protein_id}_ligand_{ligand_idx}"
             
-            print(f"Successfully created HeteroData for {protein_id} ligand {ligand_idx}")
             return data
             
         except Exception as e:

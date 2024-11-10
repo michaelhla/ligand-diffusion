@@ -39,14 +39,14 @@ def benchmark_dataloader(dataloader, num_batches=5):
 if __name__ == "__main__":
     print("Creating minimal datasets for testing...")
     
-    # # Create very small datasets for testing
-    # pdbbind_dataset = PDBBind(
-    #     root='/workspace/pdbbind/PDBBind_processed',
-    #     cache_path=None,  # Disable caching for streaming test
-    #     split='train',
-    #     num_workers=4,
-    #     precompute=False
-    # )
+    # Create very small datasets for testing
+    pdbbind_dataset = PDBBind(
+        root='/workspace/pdbbind/PDBBind_processed',
+        cache_path=None,  # Disable caching for streaming test
+        split='train',
+        num_workers=4,
+        precompute=False
+    )
     
     moad_dataset = MOAD(
         root='/workspace/dockgen/BindingMOAD_2020_processed',
@@ -55,24 +55,25 @@ if __name__ == "__main__":
         num_workers=4,
         precompute=False
     )
+
     # Add debug prints for dataset
-    # print(f"\nPDBBind dataset size: {len(pdbbind_dataset)}")
-    # print("Testing first item:")
-    # first_item = pdbbind_dataset[0]
-    # if first_item is not None:
-    #     print(f"First item keys: {first_item.keys}")
-    # else:
-    #     print("First item is None!")
+    print(f"\nPDBBind dataset size: {len(pdbbind_dataset)}")
+    print("Testing first item:")
+    first_item = pdbbind_dataset[0]
+    if first_item is not None:
+        print(f"First item keys: {first_item.keys}")
+    else:
+        print("First item is None!")
     
-    # # Test with very small batch size and fewer workers for testing
-    # print("\nTesting PDBBind streaming:")
-    # pdbbind_loader = ProteinLigandDataLoader(
-    #     pdbbind_dataset,
-    #     batch_size=32,  # Small batch size
-    #     shuffle=True,
-    #     num_workers=2,  # Fewer workers
-    # )
-    # benchmark_dataloader(pdbbind_loader)
+    # Test with very small batch size and fewer workers for testing
+    print("\nTesting PDBBind streaming:")
+    pdbbind_loader = ProteinLigandDataLoader(
+        pdbbind_dataset,
+        batch_size=32,  # Small batch size
+        shuffle=True,
+        num_workers=2,  # Fewer workers
+    )
+    benchmark_dataloader(pdbbind_loader)
     
     print("\nTesting MOAD streaming:")
     moad_loader = ProteinLigandDataLoader(

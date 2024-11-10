@@ -1,44 +1,93 @@
 from typing import Optional, List
 import os
 from torch_geometric.data import HeteroData
-from .protein_ligand import ProteinLigandDataset
+from protein_ligand import ProteinLigandDataset
 import numpy as np
 from rdkit import Chem
+import torch
+import rdkit.RDLogger as RDLogger
+
+
+# Disable RDKit warnings
+RDLogger.DisableLog('rdApp.*')
 
 class MOAD(ProteinLigandDataset):
     def get_complex_list(self) -> List[str]:
-        # Implement MOAD-specific complex list generation
-        # This might involve reading from cluster files or other MOAD-specific organization
-        pass
+        print("Getting MOAD complex list...")
+        protein_dir = os.path.join(self.root, 'pdb_protein')
+        ligand_dir = os.path.join(self.root, 'pdb_superligand')
+        
+        # Get first few ligand files for testing
+        complex_pairs = []
+        for ligand_file in sorted(os.listdir(ligand_dir)):
+            # Skip hidden files and system files
+            if ligand_file.startswith('.'):
+                continue
+                
+            if ligand_file.endswith('_superlig_0.pdb'):
+                protein_id = ligand_file.split('_superlig_')[0]
+                protein_file = os.path.join(protein_dir, f"{protein_id}_protein.pdb")
+                
+                # Verify both protein and ligand files exist
+                if not os.path.exists(protein_file):
+                    print(f"Skipping {protein_id}: protein file not found")
+                    continue
+                    
+                # Count valid ligand files
+                ligand_count = 0
+                for i in range(10):  # Reasonable upper limit for ligands
+                    test_ligand = os.path.join(ligand_dir, f"{protein_id}_superlig_{i}.pdb")
+                    if not os.path.exists(test_ligand):
+                        break
+                    ligand_count += 1
+                    
+                for lig_idx in range(ligand_count):
+                    complex_pairs.append((protein_id, lig_idx))
+                    
+                if len(complex_pairs) >= 320:  # Limit to ~10 protein-ligand pairs
+                    break
+        
+        print(f"Found {len(complex_pairs)} valid MOAD complexes for testing")
+        for pair in complex_pairs:
+            print(f"  - {pair[0]} (ligand {pair[1]})")
+        return complex_pairs
 
-    def process_complex(self, complex_name: str) -> Optional[HeteroData]:
+    def process_complex(self, complex_pair: tuple) -> Optional[HeteroData]:
         try:
-            # Create paths (adjust paths according to MOAD structure)
-            protein_file = os.path.join(self.root, 'pdb_protein', f"{complex_name}_protein.pdb")
-            ligand_file = os.path.join(self.root, 'pdb_ligand', f"{complex_name}_ligand.sdf")
+            protein_id, ligand_idx = complex_pair
+            print(f"Processing MOAD complex: {protein_id} ligand {ligand_idx}")
             
-            # Process protein
-            protein_coords, protein_residues = self.process_protein(protein_file)
+            # Create paths
+            protein_file = os.path.join(self.root, 'pdb_protein', f"{protein_id}_protein.pdb")
+            ligand_file = os.path.join(self.root, 'pdb_superligand', 
+                                      f"{protein_id}_superlig_{ligand_idx}.pdb")
             
-            # Process ligand
+            if not os.path.exists(protein_file) or not os.path.exists(ligand_file):
+                print(f"Files not found for {protein_id} ligand {ligand_idx}")
+                return None
+                
+            # Process protein and ligand
+            protein_coords, residue_names = self.process_protein(protein_file)
             ligand_data = self.process_ligand(ligand_file)
             if ligand_data is None:
                 return None
+                
             ligand_coords, atom_types, smiles = ligand_data
             
-            # Create graph data
+            # Create graph data - only convert coordinates to tensors
             data = HeteroData()
-            data['protein'].pos = protein_coords
-            data['protein'].residues = protein_residues
-            data['ligand'].pos = ligand_coords
-            data['ligand'].atom_types = atom_types
+            data['protein'].pos = torch.from_numpy(protein_coords).float()
+            data['protein'].residues = residue_names  # Keep as strings
+            data['ligand'].pos = torch.from_numpy(ligand_coords).float()
+            data['ligand'].atom_types = atom_types  # Keep as strings
             data['ligand'].smiles = smiles
-            data.complex_name = complex_name
+            data.complex_name = f"{protein_id}_ligand_{ligand_idx}"
             
+            print(f"Successfully created HeteroData for {protein_id} ligand {ligand_idx}")
             return data
             
         except Exception as e:
-            print(f"Error processing {complex_name}: {str(e)}")
+            print(f"Error processing {protein_id} with ligand {ligand_idx}: {str(e)}")
             return None
         
     def process_protein(self, protein_file: str) -> tuple:
@@ -68,7 +117,7 @@ class MOAD(ProteinLigandDataset):
                     residue = line[17:20].strip()
                     residues.append(residue)
                     
-        return np.array(coords), residues
+        return np.array(coords, dtype=np.float32), residues
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information from PDB file.
@@ -99,9 +148,17 @@ class MOAD(ProteinLigandDataset):
                     atom_types.append(atom)
         
         # Convert to RDKit mol and get SMILES
-        mol = Chem.MolFromPDBFile(ligand_file)
+        mol = Chem.MolFromPDBFile(ligand_file, removeHs=False, sanitize=True)
         if mol is None:
             return None
+            
+        # Force conformer to be recognized as 3D
+        for conf in mol.GetConformers():
+            conf.Set3D(True)
+            
         smiles = Chem.MolToSmiles(mol)
             
-        return np.array(coords), atom_types, smiles
+        # Convert coordinates to numpy array
+        coords = np.array(coords, dtype=np.float32)
+        
+        return coords, atom_types, smiles

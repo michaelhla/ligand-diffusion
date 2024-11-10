@@ -10,6 +10,15 @@ from rdkit import Chem
 import numpy as np
 
 class ProteinLigandDataset(Dataset):
+    # Add residue vocabulary
+    RESIDUE_VOCAB = {
+        'ALA': 0, 'ARG': 1, 'ASN': 2, 'ASP': 3, 'CYS': 4,
+        'GLN': 5, 'GLU': 6, 'GLY': 7, 'HIS': 8, 'ILE': 9,
+        'LEU': 10, 'LYS': 11, 'MET': 12, 'PHE': 13, 'PRO': 14,
+        'SER': 15, 'THR': 16, 'TRP': 17, 'TYR': 18, 'VAL': 19,
+        'UNK': 20  # Unknown residue type
+    }
+
     def __init__(
         self,
         root: str,
@@ -104,8 +113,31 @@ class ProteinLigandDataset(Dataset):
         raise NotImplementedError
 
     def process_protein(self, protein_file: str) -> tuple:
-        """Extract protein coordinates and residue information. Implement in child class."""
-        raise NotImplementedError
+        coords = []
+        residue_indices = []
+        
+        with open(protein_file, 'r') as f:
+            for line in f:
+                if line.startswith('ATOM'):
+                    # Extract coordinates
+                    x = float(line[30:38].strip())
+                    y = float(line[38:46].strip())
+                    z = float(line[46:54].strip())
+                    coords.append([x, y, z])
+                    
+                    # Extract residue name and convert to index immediately
+                    residue = line[17:20].strip()
+                    residue_idx = self.RESIDUE_VOCAB.get(residue, self.RESIDUE_VOCAB['UNK'])
+                    residue_indices.append(residue_idx)
+        
+        # Debug output
+        coords_array = np.array(coords, dtype=np.float32)
+        residue_array = np.array(residue_indices, dtype=np.int64)
+        print(f"Protein processing:")
+        print(f"Coords shape: {coords_array.shape}")
+        print(f"Residue indices shape: {residue_array.shape}")
+                    
+        return coords_array, residue_array
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information and create SMILES string. Implement in child class."""

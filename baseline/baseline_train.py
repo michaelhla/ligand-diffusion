@@ -13,7 +13,8 @@ from baseline.baseline_model import BaselineModel
 from datasets.pdbbind import PDBBind
 from datasets.moad import MOAD
 
-login(token=open("api_keys.txt").read().split(":")[1].strip())
+login(token=open("api_keys.txt").readlines()[0].split("hf: ")[1].strip())
+wandb.login(key=open("api_keys.txt").readlines()[1].split("wandb: ")[1].strip())
 
 
 def train():
@@ -74,8 +75,30 @@ def train():
     print(f"Number of ligand atoms: {moad_example['ligand'].pos.shape[0]}")
     print(f"SMILES: {moad_example['ligand'].smiles}")
     print(f"First 3 residues: {moad_example['protein'].residues[:3]}")
-    
-    # Combine datasets
+
+    # # Filter out entries without ligand coordinates or SMILES
+    # def filter_dataset(dataset):
+    #     valid_indices = []
+    #     for i in range(len(dataset)):
+    #         data = dataset[i]
+    #         # Check if ligand coordinates and SMILES exist and are valid
+    #         if data is not None: 
+    #             if (data['ligand'].pos is not None and 
+    #                 data['ligand'].pos.shape[0] > 0 and
+    #                 data['ligand'].smiles is not None and 
+    #                 len(data['ligand'].smiles) > 0):
+    #                 valid_indices.append(i)
+    #     return torch.utils.data.Subset(dataset, valid_indices)
+
+    # # Clean both datasets
+    # pdbbind_dataset = filter_dataset(pdbbind_dataset)
+    # moad_dataset = filter_dataset(moad_dataset)
+
+    # print(f"\nAfter cleaning:")
+    print(f"PDBBind dataset size: {len(pdbbind_dataset)}")
+    print(f"MOAD dataset size: {len(moad_dataset)}")
+
+    # Combine cleaned datasets
     combined_dataset = torch.utils.data.ConcatDataset([pdbbind_dataset, moad_dataset])
     
     # Create dataloader

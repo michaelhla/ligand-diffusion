@@ -65,7 +65,11 @@ class MOAD(ProteinLigandDataset):
             # Process protein and ligand
             protein_coords, residue_names, residue_indices = self.process_protein(protein_file)
             ligand_data = self.process_ligand(ligand_file)
-            if ligand_data is None:
+            if (ligand_data is None or 
+            ligand_data[0] is None or  # coords
+            len(ligand_data[0]) == 0 or 
+            ligand_data[2] is None or  # smiles
+            len(ligand_data[2]) == 0):
                 return None
                 
             ligand_coords, atom_types, smiles = ligand_data

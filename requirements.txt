@@ -4,3 +4,6 @@ arxiv>=1.4.8
 biopython>=1.82.0
 rdkit>=2024.03.1
 torch_geometric
+esm
+wandb
+transformers

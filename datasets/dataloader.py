@@ -5,8 +5,9 @@ from collections import deque
 import itertools
 
 class ProteinLigandDataLoader(DataLoader):
-    def __init__(self, dataset, batch_size=1, shuffle=False, num_workers=0, **kwargs):
+    def __init__(self, dataset, batch_size=1, shuffle=False, num_workers=0, smiles_tokenizer=None, **kwargs):
         # Create vocabulary for residues and atoms
+        self.smiles_tokenizer = smiles_tokenizer
         self.residue_vocab = {
             'ALA': 0, 'ARG': 1, 'ASN': 2, 'ASP': 3, 'CYS': 4,
             'GLN': 5, 'GLU': 6, 'GLY': 7, 'HIS': 8, 'ILE': 9,
@@ -18,8 +19,27 @@ class ProteinLigandDataLoader(DataLoader):
         self.atom_vocab = {
             'C': 0, 'N': 1, 'O': 2, 'S': 3, 'F': 4, 
             'P': 5, 'Cl': 6, 'Br': 7, 'I': 8, 'H': 9,
-            'UNK': 10  # Unknown atoms
+            'UNK': 10,  # Unknown atoms
+            # Special tokens for SMILES parsing
+            'PAD': 11,  # Padding token
+            'START': 12,  # Start of sequence
+            'END': 13,  # End of sequence   
+            '(': 14, ')': 15,  # Brackets
+            '[': 16, ']': 17,  # Square brackets
+            '=': 18,  # Double bond
+            '#': 19,  # Triple bond
+            ':': 20,  # Aromatic bond
+            '+': 21, '-': 22,  # Charges
+            '.': 23,  # Disconnected structures
+            '/': 24, '\\': 25,  # Stereochemistry
+            '@': 26,  # Chirality
+            '*': 27,  # Wildcard/any atom
+            '1': 28, '2': 29, '3': 30, '4': 31, '5': 32,  # Ring numbers
+            '6': 33, '7': 34, '8': 35, '9': 36
         }
+    
+        # Create reverse mapping for decoding
+        self.idx_to_token = {v: k for k, v in self.atom_vocab.items()}
         self.target_batch_size = batch_size
         self.sample_buffer = deque()
         
@@ -33,6 +53,39 @@ class ProteinLigandDataLoader(DataLoader):
             **kwargs
         )
 
+    def get_interface_residues(self, protein_coords, ligand_coords, protein_residue_indices):
+        """
+        Identify protein residues within cutoff distance of any ligand atom
+        
+        Args:
+            protein_coords: (N, 3) tensor of protein atom coordinates
+            ligand_coords: (M, 3) tensor of ligand atom coordinates
+            protein_residue_indices: (N,) tensor mapping each protein atom to its residue index
+        
+        Returns:
+            interface_mask: Boolean mask of interface residues
+        """
+        # Calculate pairwise distances between all protein and ligand atoms
+        protein_coords = protein_coords.unsqueeze(1)  # (N, 1, 3)
+        ligand_coords = ligand_coords.unsqueeze(0)    # (1, M, 3)
+        distances = torch.sqrt(((protein_coords - ligand_coords) ** 2).sum(dim=2))  # (N, M)
+        
+        # Find minimum distance from each protein atom to any ligand atom
+        min_distances = distances.min(dim=1)[0]  # (N,)
+        
+        # Mark atoms within cutoff as interface atoms
+        interface_atoms = min_distances < self.interface_cutoff
+        
+        # Convert atom-level interface to residue-level
+        unique_residues = torch.unique(protein_residue_indices)
+        interface_residues = torch.zeros(len(unique_residues), dtype=torch.bool)
+        
+        for i, res_idx in enumerate(unique_residues):
+            res_atoms = protein_residue_indices == res_idx
+            if interface_atoms[res_atoms].any():
+                interface_residues[i] = True
+                
+        return interface_residues        
     def collate_fn(self, batch):
         # Add valid samples to buffer
         valid_data = [data for data in batch if data is not None]
@@ -52,6 +105,17 @@ class ProteinLigandDataLoader(DataLoader):
                 for atom in data['ligand'].atom_types
             ], dtype=torch.long)
             data['ligand'].atom_tokens = atom_tokens
+
+            interface_mask = self.get_interface_residues(
+                data['protein'].pos,
+                data['ligand'].pos,
+                data['protein'].residue_indices  # You'll need to ensure this exists in your data
+            )
+            data['protein'].interface_mask = interface_mask
+            
+            # Tokenize SMILES using the BPE tokenizer
+            smiles_tokens = self.smiles_tokenizer.encode(data['ligand'].smiles)
+            data['ligand'].smiles_tokens = torch.tensor(smiles_tokens, dtype=torch.long)
             
         self.sample_buffer.extend(valid_data)
 

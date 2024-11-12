@@ -22,33 +22,3 @@ class ProteinEncoder(nn.Module):
         )
         
         return output['structure_embeddings']
-
-# Load the pretrained model
-model = ESM3.from_pretrained()
-# Example 3D coordinates tensor
-structure_coords = torch.rand((1, 128, 3, 3))  # (B, L, 3, 3)
-
-# Example inputs
-sequence_tokens = torch.randint(0, 64, (1, 128))
-structure_tokens = torch.randint(0, 4096, (1, 128))
-ss8_tokens = torch.randint(0, 8, (1, 128))
-sasa_tokens = torch.randint(0, 16, (1, 128))
-function_tokens = torch.randint(0, 260, (1, 128, 8))
-residue_annotation_tokens = torch.randint(0, 1478, (1, 128, 16))
-average_plddt = torch.rand((1, 128))
-per_res_plddt = torch.rand((1, 128))
-
-# Forward pass
-output = model(
-    sequence_tokens=sequence_tokens,
-    structure_tokens=structure_tokens,
-    ss8_tokens=ss8_tokens,
-    sasa_tokens=sasa_tokens,
-    function_tokens=function_tokens,
-    residue_annotation_tokens=residue_annotation_tokens,
-    average_plddt=average_plddt,
-    per_res_plddt=per_res_plddt,
-    structure_coords=structure_coords
-)
-
-print(output)

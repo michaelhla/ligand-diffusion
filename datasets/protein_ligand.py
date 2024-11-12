@@ -113,8 +113,22 @@ class ProteinLigandDataset(Dataset):
         raise NotImplementedError
 
     def process_protein(self, protein_file: str) -> tuple:
+        """Process protein PDB file to extract coordinates and residue information.
+        
+        Args:
+            protein_file: Path to protein PDB file
+            
+        Returns:
+            tuple: (coords_array, residue_names, residue_indices)
+                coords_array: numpy array of shape (N, 3) containing atom coordinates
+                residue_names: list of residue names (e.g., 'ALA', 'GLY', etc.)
+                residue_indices: numpy array of shape (N,) containing residue indices
+        """
         coords = []
+        residue_names = []  # Added to store residue names
         residue_indices = []
+        current_residue_id = None
+        current_residue_idx = -1  # Start at -1 so first residue gets index 0
         
         with open(protein_file, 'r') as f:
             for line in f:
@@ -125,19 +139,39 @@ class ProteinLigandDataset(Dataset):
                     z = float(line[46:54].strip())
                     coords.append([x, y, z])
                     
-                    # Extract residue name and convert to index immediately
-                    residue = line[17:20].strip()
-                    residue_idx = self.RESIDUE_VOCAB.get(residue, self.RESIDUE_VOCAB['UNK'])
-                    residue_indices.append(residue_idx)
+                    # Extract residue information
+                    residue = line[17:20].strip()  # Residue name (e.g., 'ALA')
+                    residue_names.append(residue)  # Store the actual residue name
+                    
+                    # Create unique residue identifier from chain, number, and insertion code
+                    residue_id = (
+                        line[21:22],  # Chain ID
+                        int(line[22:26].strip()),  # Residue sequence number
+                        line[26:27].strip()  # Insertion code (if any)
+                    )
+                    
+                    # Update residue index when we see a new residue
+                    if residue_id != current_residue_id:
+                        current_residue_id = residue_id
+                        current_residue_idx += 1
+                    
+                    # Store sequential index for this residue
+                    residue_indices.append(current_residue_idx)
         
-        # Debug output
+        # Convert to numpy arrays
         coords_array = np.array(coords, dtype=np.float32)
         residue_array = np.array(residue_indices, dtype=np.int64)
-        print(f"Protein processing:")
-        print(f"Coords shape: {coords_array.shape}")
-        print(f"Residue indices shape: {residue_array.shape}")
-                    
-        return coords_array, residue_array
+        
+        # Validate shapes
+        assert len(coords_array) == len(residue_array) == len(residue_names), \
+            f"Mismatch between coordinates ({len(coords_array)}), residue indices ({len(residue_array)}), and residue names ({len(residue_names)})"
+        assert coords_array.shape[1] == 3, \
+            f"Coordinates should have shape (N, 3), got {coords_array.shape}"
+        
+        if len(coords_array) == 0:
+            raise ValueError(f"No ATOM records found in {protein_file}")
+                
+        return coords_array, residue_names, residue_array
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information and create SMILES string. Implement in child class."""

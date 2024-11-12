@@ -5,7 +5,7 @@ from collections import deque
 import itertools
 
 class ProteinLigandDataLoader(DataLoader):
-    def __init__(self, dataset, batch_size=1, shuffle=False, num_workers=0, smiles_tokenizer=None, **kwargs):
+    def __init__(self, dataset, batch_size=1, shuffle=False, num_workers=0, interface_cutoff=8.0, smiles_tokenizer=None, **kwargs):
         # Create vocabulary for residues and atoms
         self.smiles_tokenizer = smiles_tokenizer
         self.residue_vocab = {
@@ -42,6 +42,7 @@ class ProteinLigandDataLoader(DataLoader):
         self.idx_to_token = {v: k for k, v in self.atom_vocab.items()}
         self.target_batch_size = batch_size
         self.sample_buffer = deque()
+        self.interface_cutoff = interface_cutoff
         
         super().__init__(
             dataset,
@@ -65,6 +66,11 @@ class ProteinLigandDataLoader(DataLoader):
         Returns:
             interface_mask: Boolean mask of interface residues
         """
+        if protein_coords.size(0) == 0 or ligand_coords.size(0) == 0:
+            raise ValueError(
+            f"Empty coordinates detected: protein_coords shape={protein_coords.shape}, "
+                f"ligand_coords shape={ligand_coords.shape}"
+            )
         # Calculate pairwise distances between all protein and ligand atoms
         protein_coords = protein_coords.unsqueeze(1)  # (N, 1, 3)
         ligand_coords = ligand_coords.unsqueeze(0)    # (1, M, 3)
@@ -89,7 +95,7 @@ class ProteinLigandDataLoader(DataLoader):
     def collate_fn(self, batch):
         # Add valid samples to buffer
         valid_data = [data for data in batch if data is not None]
-        
+
         # Tokenize residues and atoms for each sample
         for data in valid_data:
             # Convert residues to token indices
@@ -106,6 +112,11 @@ class ProteinLigandDataLoader(DataLoader):
             ], dtype=torch.long)
             data['ligand'].atom_tokens = atom_tokens
 
+            if data['ligand'].pos.size(0) == 0:
+                print(f"Empty ligand coords for {data.complex_name}")
+                print(data['ligand'].smiles)
+                continue
+
             interface_mask = self.get_interface_residues(
                 data['protein'].pos,
                 data['ligand'].pos,
@@ -116,7 +127,7 @@ class ProteinLigandDataLoader(DataLoader):
             # Tokenize SMILES using the BPE tokenizer
             smiles_tokens = self.smiles_tokenizer.encode(data['ligand'].smiles)
             data['ligand'].smiles_tokens = torch.tensor(smiles_tokens, dtype=torch.long)
-            
+
         self.sample_buffer.extend(valid_data)
 
     def __iter__(self):

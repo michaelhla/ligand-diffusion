@@ -1,7 +1,7 @@
 from typing import Optional, List
 import os
 from torch_geometric.data import HeteroData
-from protein_ligand import ProteinLigandDataset
+from datasets.protein_ligand import ProteinLigandDataset
 import numpy as np
 from rdkit import Chem
 import torch
@@ -63,7 +63,7 @@ class MOAD(ProteinLigandDataset):
                 return None
                 
             # Process protein and ligand
-            protein_coords, residue_names = self.process_protein(protein_file)
+            protein_coords, residue_names, residue_indices = self.process_protein(protein_file)
             ligand_data = self.process_ligand(ligand_file)
             if ligand_data is None:
                 return None
@@ -77,6 +77,7 @@ class MOAD(ProteinLigandDataset):
             data['ligand'].pos = torch.from_numpy(ligand_coords).float()
             data['ligand'].atom_types = atom_types  # Keep as strings
             data['ligand'].smiles = smiles
+            data['protein'].residue_indices = torch.from_numpy(residue_indices).long()  # Add this line
             data.complex_name = f"{protein_id}_ligand_{ligand_idx}"
             
             return data
@@ -85,34 +86,6 @@ class MOAD(ProteinLigandDataset):
             print(f"Error processing {protein_id} with ligand {ligand_idx}: {str(e)}")
             return None
         
-    def process_protein(self, protein_file: str) -> tuple:
-        """Extract protein coordinates and residue information from PDB file.
-        
-        Args:
-            protein_file: Path to protein PDB file
-            
-        Returns:
-            tuple: (protein_coords, protein_residues)
-                protein_coords: numpy array of shape (N, 3) containing atom coordinates
-                protein_residues: list of residue names
-        """
-        coords = []
-        residues = []
-        
-        with open(protein_file, 'r') as f:
-            for line in f:
-                if line.startswith('ATOM'):
-                    # Extract coordinates
-                    x = float(line[30:38].strip())
-                    y = float(line[38:46].strip())
-                    z = float(line[46:54].strip())
-                    coords.append([x, y, z])
-                    
-                    # Extract residue name
-                    residue = line[17:20].strip()
-                    residues.append(residue)
-                    
-        return np.array(coords, dtype=np.float32), residues
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information from PDB file.

@@ -1,7 +1,7 @@
 from typing import Optional, List
 import os
 from torch_geometric.data import HeteroData
-from protein_ligand import ProteinLigandDataset
+from datasets.protein_ligand import ProteinLigandDataset
 import numpy as np
 from rdkit import Chem
 import torch
@@ -14,7 +14,7 @@ class PDBBind(ProteinLigandDataset):
     def get_complex_list(self) -> List[str]:
         complex_dirs = os.listdir(self.root)
         # Take only first few directories for quick testing
-        complex_dirs = complex_dirs[:160]  # Limit to 10 complexes
+        # complex_dirs = complex_dirs[:160]  # Limit to 10 complexes
         print(f"Using {len(complex_dirs)} PDBBind complexes")
         return [d for d in complex_dirs if os.path.isdir(os.path.join(self.root, d))]
 
@@ -27,7 +27,7 @@ class PDBBind(ProteinLigandDataset):
                 return None
             
             # Process protein and ligand
-            protein_coords, residue_names = self.process_protein(protein_file)
+            protein_coords, residue_names, residue_indices = self.process_protein(protein_file)
             ligand_data = self.process_ligand(ligand_file)
             if ligand_data is None:
                 return None
@@ -38,6 +38,7 @@ class PDBBind(ProteinLigandDataset):
             data = HeteroData()
             data['protein'].pos = torch.from_numpy(protein_coords).float()
             data['protein'].residues = residue_names  # Keep as strings
+            data['protein'].residue_indices = torch.from_numpy(residue_indices).long()  # Add this line
             data['ligand'].pos = torch.from_numpy(ligand_coords).float()
             data['ligand'].atom_types = atom_types  # Keep as strings
             data['ligand'].smiles = smiles
@@ -49,34 +50,6 @@ class PDBBind(ProteinLigandDataset):
             print(f"Error processing {complex_name}: {str(e)}")
             return None
         
-    def process_protein(self, protein_file: str) -> tuple:
-        """Extract protein coordinates and residue information from PDB file.
-        
-        Args:
-            protein_file: Path to protein PDB file
-            
-        Returns:
-            tuple: (protein_coords, protein_residues)
-                protein_coords: numpy array of shape (N, 3) containing atom coordinates
-                protein_residues: list of residue names
-        """
-        coords = []
-        residues = []
-        
-        with open(protein_file, 'r') as f:
-            for line in f:
-                if line.startswith('ATOM'):
-                    # Extract coordinates
-                    x = float(line[30:38].strip())
-                    y = float(line[38:46].strip())
-                    z = float(line[46:54].strip())
-                    coords.append([x, y, z])
-                    
-                    # Extract residue name
-                    residue = line[17:20].strip()
-                    residues.append(residue)
-                    
-        return np.array(coords), residues
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information from SDF file.

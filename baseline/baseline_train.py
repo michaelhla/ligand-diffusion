@@ -3,18 +3,24 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.nn import functional as F
-from datasets.dataloader import ProteinLigandDataLoader
-from baseline.baseline_model import BaselineModel
-from datasets.benchmark import PDBBind, MOAD
 from transformers import AutoTokenizer
 import os
 from tqdm import tqdm
+from huggingface_hub import login
+import sys, os; sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from datasets.dataloader import ProteinLigandDataLoader
+from baseline.baseline_model import BaselineModel
+from datasets.pdbbind import PDBBind
+from datasets.moad import MOAD
+
+login(token=open("api_keys.txt").read().split(":")[1].strip())
+
 
 def train():
     # Initialize wandb
     wandb.init(
-        project="protein-ligand-generation",
-        name="baseline-h100",
+        project="ligand-diffusion",
+        name="baseline-test",
         config={
             "learning_rate": 1e-4,
             "batch_size": 32,
@@ -50,6 +56,24 @@ def train():
         num_workers=4,
         precompute=False
     )
+
+    # Print example from PDBBind dataset
+    pdbbind_example = pdbbind_dataset[0]
+    print("\nPDBBind Example:")
+    print(f"Complex name: {pdbbind_example.complex_name}")
+    print(f"Number of protein atoms: {pdbbind_example['protein'].pos.shape[0]}")
+    print(f"Number of ligand atoms: {pdbbind_example['ligand'].pos.shape[0]}")
+    print(f"SMILES: {pdbbind_example['ligand'].smiles}")
+    print(f"First 3 residues: {pdbbind_example['protein'].residues[:3]}")
+
+    # Print example from MOAD dataset  
+    moad_example = moad_dataset[0]
+    print("\nMOAD Example:")
+    print(f"Complex name: {moad_example.complex_name}")
+    print(f"Number of protein atoms: {moad_example['protein'].pos.shape[0]}")
+    print(f"Number of ligand atoms: {moad_example['ligand'].pos.shape[0]}")
+    print(f"SMILES: {moad_example['ligand'].smiles}")
+    print(f"First 3 residues: {moad_example['protein'].residues[:3]}")
     
     # Combine datasets
     combined_dataset = torch.utils.data.ConcatDataset([pdbbind_dataset, moad_dataset])

@@ -113,65 +113,69 @@ class ProteinLigandDataset(Dataset):
         raise NotImplementedError
 
     def process_protein(self, protein_file: str) -> tuple:
-        """Process protein PDB file to extract coordinates and residue information.
+        """Extract backbone atoms (N, CA, C) from PDB file.
         
         Args:
             protein_file: Path to protein PDB file
             
         Returns:
-            tuple: (coords_array, residue_names, residue_indices)
-                coords_array: numpy array of shape (N, 3) containing atom coordinates
-                residue_names: list of residue names (e.g., 'ALA', 'GLY', etc.)
-                residue_indices: numpy array of shape (N,) containing residue indices
+            tuple: (coords, residue_names, residue_indices)
+                coords: numpy array of shape (num_residues, 3, 3) containing backbone atom coordinates
+                residue_names: list of residue names
+                residue_indices: numpy array of residue indices
         """
-        coords = []
-        residue_names = []  # Added to store residue names
+        backbone_atoms = ['N', 'CA', 'C']
+        current_residue = None
+        residue_coords = []
+        residue_names = []
         residue_indices = []
-        current_residue_id = None
-        current_residue_idx = -1  # Start at -1 so first residue gets index 0
+        current_bb_atoms = {}
         
         with open(protein_file, 'r') as f:
             for line in f:
                 if line.startswith('ATOM'):
+                    atom_name = line[12:16].strip()
+                    residue_name = line[17:20].strip()
+                    residue_num = int(line[22:26].strip())
+                    
+                    # Only process backbone atoms
+                    if atom_name not in backbone_atoms:
+                        continue
+                        
                     # Extract coordinates
                     x = float(line[30:38].strip())
                     y = float(line[38:46].strip())
                     z = float(line[46:54].strip())
-                    coords.append([x, y, z])
                     
-                    # Extract residue information
-                    residue = line[17:20].strip()  # Residue name (e.g., 'ALA')
-                    residue_names.append(residue)  # Store the actual residue name
+                    # If we're starting a new residue
+                    if residue_num != current_residue:
+                        # Store the previous residue if we have all backbone atoms
+                        if current_residue is not None and len(current_bb_atoms) == 3:
+                            coords = [current_bb_atoms[atom] for atom in backbone_atoms]
+                            residue_coords.append(coords)
+                            residue_names.append(current_residue_name)
+                            residue_indices.append(current_residue)
+                        
+                        # Start new residue
+                        current_residue = residue_num
+                        current_residue_name = residue_name
+                        current_bb_atoms = {}
                     
-                    # Create unique residue identifier from chain, number, and insertion code
-                    residue_id = (
-                        line[21:22],  # Chain ID
-                        int(line[22:26].strip()),  # Residue sequence number
-                        line[26:27].strip()  # Insertion code (if any)
-                    )
-                    
-                    # Update residue index when we see a new residue
-                    if residue_id != current_residue_id:
-                        current_residue_id = residue_id
-                        current_residue_idx += 1
-                    
-                    # Store sequential index for this residue
-                    residue_indices.append(current_residue_idx)
+                    # Store this backbone atom
+                    current_bb_atoms[atom_name] = [x, y, z]
+        
+        # Don't forget to store the last residue
+        if current_residue is not None and len(current_bb_atoms) == 3:
+            coords = [current_bb_atoms[atom] for atom in backbone_atoms]
+            residue_coords.append(coords)
+            residue_names.append(current_residue_name)
+            residue_indices.append(current_residue)
         
         # Convert to numpy arrays
-        coords_array = np.array(coords, dtype=np.float32)
-        residue_array = np.array(residue_indices, dtype=np.int64)
+        coords = np.array(residue_coords, dtype=np.float32)  # Shape: (num_residues, 3, 3)
+        residue_indices = np.array(residue_indices, dtype=np.int64)
         
-        # Validate shapes
-        assert len(coords_array) == len(residue_array) == len(residue_names), \
-            f"Mismatch between coordinates ({len(coords_array)}), residue indices ({len(residue_array)}), and residue names ({len(residue_names)})"
-        assert coords_array.shape[1] == 3, \
-            f"Coordinates should have shape (N, 3), got {coords_array.shape}"
-        
-        if len(coords_array) == 0:
-            raise ValueError(f"No ATOM records found in {protein_file}")
-                
-        return coords_array, residue_names, residue_array
+        return coords, residue_names, residue_indices
 
     def process_ligand(self, ligand_file: str) -> tuple:
         """Extract ligand information and create SMILES string. Implement in child class."""

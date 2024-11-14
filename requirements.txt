@@ -7,3 +7,5 @@ torch_geometric
 esm
 wandb
 transformers
+openmm
+mdtraj

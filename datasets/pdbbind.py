@@ -90,6 +90,10 @@ class PDBBind(ProteinLigandDataset):
             
         # Generate SMILES
         smiles = Chem.MolToSmiles(mol)
+
+        # Generate SMILES with implicit hydrogens
+        mol_no_h = Chem.RemoveHs(mol)  # Remove explicit hydrogens
+        smiles = Chem.MolToSmiles(mol_no_h, kekuleSmiles=False)
             
         # Convert to numpy arrays before returning
         coords = np.array(coords, dtype=np.float32)

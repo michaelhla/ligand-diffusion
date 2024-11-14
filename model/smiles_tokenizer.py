@@ -4,6 +4,7 @@ import re
 import json
 import os
 from pathlib import Path
+from tqdm import tqdm
 
 class SMILESBPETokenizer:
     def __init__(self, vocab_size: int = 1000, min_frequency: int = 2):
@@ -31,18 +32,50 @@ class SMILESBPETokenizer:
         self.vocab = self.base_vocab.copy()
         self.reverse_vocab = {v: k for k, v in self.vocab.items()}
 
-    def train(self, smiles_list: List[str]):
-        """Train BPE tokenizer on a list of SMILES strings."""
+    
+    def train(self, datasets):
+        """Train BPE tokenizer directly on datasets."""
         # Count initial character frequencies
         word_freqs = defaultdict(int)
-        for smiles in smiles_list:
-            tokens = self._tokenize_smiles(smiles)
-            word_freqs[' '.join(tokens)] += 1
+        print("Tokenizing SMILES strings...")
+        
+        # Check for cached tokenization data
+        cache_dir = Path("checkpoints/tokenizer_cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        word_freqs_file = cache_dir / "word_freqs.json"
+        tokens_file = cache_dir / "tokens.json"
+
+        if word_freqs_file.exists() and tokens_file.exists():
+            print("Loading cached tokenization data...")
+            with open(word_freqs_file, 'r') as f:
+                word_freqs = defaultdict(int, json.load(f))
+            with open(tokens_file, 'r') as f:
+                all_tokens = json.load(f)
+        else:
+            # Process datasets directly
+            print("Processing datasets and caching tokenization data...")
+            all_tokens = {}
+            for dataset in datasets:
+                for data in tqdm(dataset, desc=f"Processing dataset of size {len(dataset)}"):
+                    if data is not None and data['ligand'].smiles is not None:
+                        tokens = self._tokenize_smiles(data['ligand'].smiles)
+                        token_str = ' '.join(tokens)
+                        word_freqs[token_str] += 1
+                        all_tokens[data['ligand'].smiles] = tokens
+            
+            # Cache the tokenization data
+            with open(word_freqs_file, 'w') as f:
+                json.dump(dict(word_freqs), f)
+            with open(tokens_file, 'w') as f:
+                json.dump(all_tokens, f)
 
         # Initialize vocabulary with character-level tokens
         vocab = self.base_vocab.copy()
         next_token_id = max(vocab.values()) + 1
 
+        remaining_merges = self.vocab_size - len(vocab)
+        pbar = tqdm(total=remaining_merges, desc="Training BPE")
+        
         while len(vocab) < self.vocab_size:
             # Count pair frequencies
             pair_freqs = defaultdict(int)
@@ -72,7 +105,10 @@ class SMILESBPETokenizer:
                 new_word = word.replace(' '.join(best_pair[0]), new_token)
                 new_word_freqs[new_word] += freq
             word_freqs = new_word_freqs
+            
+            pbar.update(1)
 
+        pbar.close()
         self.vocab = vocab
         self.reverse_vocab = {v: k for k, v in vocab.items()}
 
@@ -118,9 +154,13 @@ class SMILESBPETokenizer:
 
     def save(self, path: str):
         """Save tokenizer vocabulary and merges to file."""
+        # Convert tuple keys to strings for JSON serialization
+        serializable_merges = {f"{pair[0]}|{pair[1]}": value 
+                                for pair, value in self.merges.items()}
+        
         save_dict = {
             'vocab': self.vocab,
-            'merges': self.merges,
+            'merges': serializable_merges,
             'special_tokens': self.special_tokens
         }
         with open(path, 'w') as f:
@@ -134,7 +174,9 @@ class SMILESBPETokenizer:
         
         tokenizer = cls(vocab_size=len(save_dict['vocab']))
         tokenizer.vocab = save_dict['vocab']
-        tokenizer.merges = save_dict['merges']
+        # Convert string keys back to tuples
+        tokenizer.merges = {tuple(k.split('|')): v 
+                          for k, v in save_dict['merges'].items()}
         tokenizer.special_tokens = save_dict['special_tokens']
         tokenizer.reverse_vocab = {v: k for k, v in tokenizer.vocab.items()}
         return tokenizer

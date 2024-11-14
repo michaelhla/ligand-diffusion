@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.nn import functional as F
-from transformers import AutoTokenizer
 import os
 from tqdm import tqdm
 from huggingface_hub import login
@@ -12,6 +11,8 @@ from datasets.dataloader import ProteinLigandDataLoader
 from baseline.baseline_model import BaselineModel
 from datasets.pdbbind import PDBBind
 from datasets.moad import MOAD
+from model.smiles_tokenizer import SMILESBPETokenizer
+import json
 
 login(token=open("api_keys.txt").readlines()[0].split("hf: ")[1].strip())
 wandb.login(key=open("api_keys.txt").readlines()[1].split("wandb: ")[1].strip())
@@ -24,7 +25,7 @@ def train():
         name="baseline-test",
         config={
             "learning_rate": 1e-4,
-            "batch_size": 32,
+            "batch_size": 16,
             "max_epochs": 100,
             "hidden_dim": 1024,
             "num_layers": 6,
@@ -38,8 +39,8 @@ def train():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Initialize tokenizer (using same vocab as dataloader)
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")  # Replace with your actual tokenizer
+    # Initialize SMILES tokenizer
+    tokenizer = SMILESBPETokenizer(vocab_size=1000)
     
     # Initialize datasets
     pdbbind_dataset = PDBBind(
@@ -76,29 +77,28 @@ def train():
     print(f"SMILES: {moad_example['ligand'].smiles}")
     print(f"First 3 residues: {moad_example['protein'].residues[:3]}")
 
-    # # Filter out entries without ligand coordinates or SMILES
-    # def filter_dataset(dataset):
-    #     valid_indices = []
-    #     for i in range(len(dataset)):
-    #         data = dataset[i]
-    #         # Check if ligand coordinates and SMILES exist and are valid
-    #         if data is not None: 
-    #             if (data['ligand'].pos is not None and 
-    #                 data['ligand'].pos.shape[0] > 0 and
-    #                 data['ligand'].smiles is not None and 
-    #                 len(data['ligand'].smiles) > 0):
-    #                 valid_indices.append(i)
-    #     return torch.utils.data.Subset(dataset, valid_indices)
-
-    # # Clean both datasets
-    # pdbbind_dataset = filter_dataset(pdbbind_dataset)
-    # moad_dataset = filter_dataset(moad_dataset)
-
-    # print(f"\nAfter cleaning:")
     print(f"PDBBind dataset size: {len(pdbbind_dataset)}")
     print(f"MOAD dataset size: {len(moad_dataset)}")
 
-    # Combine cleaned datasets
+    # Check for existing tokenizer checkpoint
+    tokenizer_path = "checkpoints/smiles_tokenizer.json"
+    if os.path.exists(tokenizer_path):
+        print("Loading existing tokenizer from checkpoint...")
+        with open(tokenizer_path, 'r') as f:
+            tokenizer_data = json.load(f)
+            tokenizer.vocab = tokenizer_data['vocab'] 
+            tokenizer.merges = tokenizer_data['merges']
+            tokenizer.special_tokens = tokenizer_data['special_tokens']
+            tokenizer.reverse_vocab = {v: k for k, v in tokenizer.vocab.items()}
+    else:
+        print("Training new tokenizer...")
+        # Pass datasets directly to tokenizer
+        tokenizer.train([pdbbind_dataset, moad_dataset])
+    # Save trained tokenizer
+    os.makedirs("checkpoints", exist_ok=True)
+    tokenizer.save("checkpoints/smiles_tokenizer.json")
+
+    # Combine datasets
     combined_dataset = torch.utils.data.ConcatDataset([pdbbind_dataset, moad_dataset])
     
     # Create dataloader
@@ -115,13 +115,21 @@ def train():
         hidden_dim=config.hidden_dim,
         num_layers=config.num_layers,
         num_heads=config.num_heads,
-        vocab_size=len(dataloader.atom_vocab)
+        vocab_size=len(tokenizer.vocab)
     ).to(device)
+
+    # Freeze ESM parameters
+    for param in model.protein_encoder.esm.parameters():
+        param.requires_grad = False
+    
+    # # Enable gradient checkpointing for transformer decoder
+    # model.decoder.enable_input_require_grads()
+    # model.decoder.gradient_checkpointing_enable()
     
     # Initialize optimizer
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
     
-    # Training loop
+    # Training loop with memory optimizations
     global_step = 0
     for epoch in range(config.max_epochs):
         model.train()
@@ -129,75 +137,54 @@ def train():
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}")
         
         for batch_idx, batch in enumerate(progress_bar):
-            # Learning rate warmup
-            if global_step < config.warmup_steps:
-                lr = config.learning_rate * (global_step / config.warmup_steps)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
+            # Clear cache between batches
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
-            # Prepare input data
+            # Move data to device and immediately clear from CPU
             protein_data = {
-                'sequence_tokens': batch['protein'].residue_tokens.to(device),
-                'coords': batch['protein'].pos.to(device),
-                'interface_mask': batch['protein'].interface_mask.to(device)
+                'coords': batch['protein']['coords'].to(device),
+                'residue_indices': batch['protein']['residue_indices'].to(device)
             }
+            smiles_tokens = batch['ligand']['smiles_tokens'].to(device)
+            batch = None  # Clear the batch from CPU memory
             
-            smiles_tokens = batch['ligand'].smiles_tokens.to(device)
-            
-            # Forward pass
-            logits = model(protein_data, smiles_tokens[:, :-1])  # Remove last token for input
-            
-            # Calculate loss (ignore padding tokens)
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                smiles_tokens[:, 1:].contiguous().view(-1),  # Shift right for teacher forcing
-                ignore_index=dataloader.atom_vocab['PAD']
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                logits = model(protein_data, smiles_tokens[:, :-1])
+                
+                # Calculate loss (ignore padding tokens)
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)),
+                    smiles_tokens[:, 1:].contiguous().view(-1),
+                    ignore_index=tokenizer.special_tokens['PAD']
+                )
             
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
-            
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-            
+            torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], config.grad_clip)
             optimizer.step()
+            
+            # Free up memory
+            del logits
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
             # Update metrics
             epoch_loss += loss.item()
             global_step += 1
             
-            # Log to wandb
-            wandb.log({
-                "batch_loss": loss.item(),
-                "learning_rate": optimizer.param_groups[0]['lr'],
-                "epoch": epoch,
-                "global_step": global_step
-            })
+            # Log to wandb (less frequently)
+            if global_step % 10 == 0:  # Log every 10 steps
+                wandb.log({
+                    "batch_loss": loss.item(),
+                    "learning_rate": optimizer.param_groups[0]['lr'],
+                    "epoch": epoch,
+                    "global_step": global_step
+                })
             
             # Update progress bar
             progress_bar.set_postfix({"loss": loss.item()})
-            
-        # Log epoch metrics
-        avg_epoch_loss = epoch_loss / len(dataloader)
-        wandb.log({
-            "epoch_loss": avg_epoch_loss,
-            "epoch": epoch
-        })
-        
-        # Save checkpoint
-        if (epoch + 1) % 5 == 0:
-            checkpoint_path = f"checkpoints/baseline_epoch_{epoch+1}.pt"
-            os.makedirs("checkpoints", exist_ok=True)
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_epoch_loss,
-            }, checkpoint_path)
-            
-            # Log model checkpoint to wandb
-            wandb.save(checkpoint_path)
 
 if __name__ == "__main__":
     train()

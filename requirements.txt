@@ -9,3 +9,4 @@ wandb
 transformers
 openmm
 mdtraj
+h5py 

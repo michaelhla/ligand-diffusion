@@ -30,11 +30,12 @@ class ProteinLigandDataLoader(DataLoader):
             **kwargs
         )
 
+    @staticmethod
     def get_interface_residues(
-        self,
         protein_coords: torch.Tensor,  # Shape: (num_residues, 3, 3)
         ligand_coords: torch.Tensor,   # Shape: (num_ligand_atoms, 3)
-        residue_indices: torch.Tensor  # Shape: (num_residues,)
+        residue_indices: torch.Tensor,  # Shape: (num_residues,)
+        interface_cutoff: float = 8.0
     ) -> torch.Tensor:
         """
         Calculate interface residues based on distance to ligand atoms.
@@ -54,7 +55,7 @@ class ProteinLigandDataLoader(DataLoader):
         min_distances = distances.min(dim=1)[0]  # (num_residues,)
         
         # Create interface mask (True for residues within cutoff distance)
-        interface_mask = min_distances < self.interface_cutoff
+        interface_mask = min_distances < interface_cutoff
         
         return interface_mask
 
